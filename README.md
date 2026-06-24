@@ -34,7 +34,7 @@ command.
 
 - Windows x64
 - An MSI laptop with MSI Center installed (background service running)
-- Prebuilt release: nothing else (self-contained `.exe`). Building from source: .NET 10 SDK.
+- Prebuilt release: nothing else - a single **~1-2 MB native `.exe`**, no .NET runtime needed (NativeAOT). Building from source: .NET 10 SDK + the Visual Studio C++ Desktop workload (the NativeAOT linker).
 
 ## Install
 
@@ -110,8 +110,12 @@ above, handled by the service.
 ## Build from source
 
 ```
-dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+dotnet publish -c Release -r win-x64
 ```
+
+Produces a single self-contained native `.exe` (~1-2 MB) via **NativeAOT** - no .NET
+runtime required to run it. Building it needs the Visual Studio **C++ Desktop**
+workload (NativeAOT uses the MSVC linker).
 
 ## Roadmap
 

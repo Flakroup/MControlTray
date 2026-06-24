@@ -3,14 +3,25 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
-    <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>MControlTray</RootNamespace>
     <AssemblyName>MControlTray</AssemblyName>
     <Version>1.0.0</Version>
-    <!-- asInvoker: no admin needed - the switch is just a localhost TCP message to the MSI service -->
+
+    <!-- Slim, dependency-free native build: ~3-5 MB, no .NET runtime needed -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <StackTraceSupport>false</StackTraceSupport>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="icons\e.ico"><LogicalName>e.ico</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="icons\b.ico"><LogicalName>b.ico</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="icons\s.ico"><LogicalName>s.ico</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="icons\q.ico"><LogicalName>q.ico</LogicalName></EmbeddedResource>
+  </ItemGroup>
 
 </Project>
