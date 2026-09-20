@@ -29,11 +29,13 @@ internal static class MsiProtocol
         return frame;
     }
 
-    public static void Send(int index)
+    public static void Send(int index) => Send(index, GetServerPort());
+
+    public static void Send(int index, int port)
     {
         byte[] frame = BuildFrame(index);
         using TcpClient client = new TcpClient { SendTimeout = 3000, ReceiveTimeout = 3000 };
-        client.Connect("127.0.0.1", GetServerPort());
+        client.Connect("127.0.0.1", port);
         using NetworkStream ns = client.GetStream();
         ns.Write(frame, 0, frame.Length);
         ns.Flush();
@@ -56,15 +58,18 @@ internal static class MsiProtocol
             int rc = RegGetValueW(HKEY_LOCAL_MACHINE,
                 @"SOFTWARE\Wow6432Node\MSI\MSI Center\Component\SDK", "Server Port",
                 RRF_RT_REG_DWORD, out _, ref data, ref cb);
-            if (rc == 0 && data > 10240)
-                return data;
+            return ChoosePort(rc, data);
         }
         catch (Exception)
         {
-            // fall through
+            return DefaultServerPort;
         }
-        return DefaultServerPort;
     }
+
+    // A registry value outside the dynamic port range is not a port MSI listens on;
+    // TcpClient would only throw on it, so the documented fallback is better.
+    public static int ChoosePort(int registryResult, int value)
+        => registryResult == 0 && value > 10240 && value <= 65535 ? value : DefaultServerPort;
 
     private static readonly IntPtr HKEY_LOCAL_MACHINE = unchecked((IntPtr)0x80000002L);
     private const uint RRF_RT_REG_DWORD = 0x00000010;

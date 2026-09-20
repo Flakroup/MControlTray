@@ -25,6 +25,7 @@ internal sealed class AppConfig
     public static AppConfig Load(string path)
     {
         AppConfig config = new AppConfig();
+        string? rejected = null;
         try
         {
             if (!File.Exists(path))
@@ -43,14 +44,19 @@ internal sealed class AppConfig
                 if (Hotkey.TryParse(value, out Hotkey parsed))
                     config.CycleHotkey = parsed;
                 else
-                    config.Warning = "Nieczytelny skrót w config.ini: \"" + value
-                        + "\". Używam " + DefaultCycleHotkey.Format() + ".";
+                    rejected = value;
             }
         }
         catch (Exception)
         {
-            // defaults are good enough; never block startup on the config file
+            // the defaults are good enough; never block startup on the config file
+            config.Warning = "Nie udało się odczytać config.ini. Używam " + config.CycleHotkey.Format() + ".";
+            return config;
         }
+
+        if (rejected is not null)
+            config.Warning = "Nieczytelny skrót w config.ini: \"" + rejected
+                + "\". Używam " + config.CycleHotkey.Format() + ".";
         return config;
     }
 
@@ -87,6 +93,7 @@ internal sealed class AppConfig
             "#   Extreme Performance -> Balanced -> ECO / Silent -> ...",
             "# Modifiers: Ctrl, Alt, Shift, Win - at least one is required.",
             "# Key: A-Z, 0-9 or F1-F24. Use \"none\" to disable the hotkey.",
+            "# Windows reserves the Win key combinations and F12, so those may be refused.",
             CycleKey + "=" + DefaultCycleHotkey.Format(),
         });
     }

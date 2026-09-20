@@ -29,7 +29,7 @@ public sealed class HotkeyTests
 
     [Theory]
     [InlineData("Ctrl+F1", 0x70u)]
-    [InlineData("Ctrl+f12", 0x7Bu)]
+    [InlineData("Ctrl+f11", 0x7Au)]
     [InlineData("Win+F24", 0x87u)]
     public void TryParse_reads_function_keys(string text, uint expectedKey)
     {
@@ -41,9 +41,9 @@ public sealed class HotkeyTests
     [Fact]
     public void TryParse_reads_digits_and_the_Windows_modifier()
     {
-        Hotkey.TryParse("Win+7", out Hotkey hotkey).ShouldBeTrue();
+        Hotkey.TryParse("Ctrl+Win+7", out Hotkey hotkey).ShouldBeTrue();
 
-        hotkey.Modifiers.ShouldBe(Hotkey.ModWin);
+        hotkey.Modifiers.ShouldBe(Hotkey.ModControl | Hotkey.ModWin);
         hotkey.VirtualKey.ShouldBe((uint)'7');
     }
 
@@ -71,6 +71,12 @@ public sealed class HotkeyTests
     [InlineData("Ctrl+Alt")]        // no key at all
     [InlineData("Ctrl+F25")]        // beyond F24
     [InlineData("Ctrl+F0")]
+    [InlineData("Ctrl+F12")]        // Windows reserves F12 for the debugger
+    [InlineData("Win+f12")]
+    [InlineData("Ctrl+C")]          // one modifier plus a letter steals a common shortcut
+    [InlineData("Win+7")]
+    [InlineData("Ctrl+F 5")]        // no whitespace inside a function key
+    [InlineData("Ctrl+F05")]
     [InlineData("Ctrl+Escape")]     // named keys are not supported
     [InlineData("Ctrl+ą")]
     public void TryParse_rejects_unusable_input(string? text)
@@ -82,8 +88,8 @@ public sealed class HotkeyTests
 
     [Theory]
     [InlineData("Ctrl+Alt+Shift+P")]
-    [InlineData("Win+F12")]
-    [InlineData("Ctrl+9")]
+    [InlineData("Win+F11")]
+    [InlineData("Ctrl+Shift+9")]
     public void Format_round_trips_through_TryParse(string text)
     {
         Hotkey.TryParse(text, out Hotkey hotkey).ShouldBeTrue();

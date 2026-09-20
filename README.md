@@ -61,8 +61,9 @@ winget install Flakroup.MControlTray
   cycles Extreme Performance -> Balanced -> ECO/Silent -> ... It is configurable
   (see below) and can be turned off.
 - **Single instance** - launching the app while it is already running does not
-  add a second tray icon: the running instance reports itself and the new
-  process exits with code `0`.
+  add a second tray icon: the running instance reports itself with a balloon and
+  the new process exits with code `0`. The guard is a per-session named mutex, so
+  an unrelated program cannot keep the tray from starting.
 - **Command line** (great for shortcuts / Stream Deck):
 
   ```
@@ -72,7 +73,8 @@ winget install Flakroup.MControlTray
   ```
 
   Exit codes: `0` switched, `1` the switch failed (is the MSI service running?),
-  `2` unknown argument.
+  `2` unknown argument. A tray that is already running picks the change up, so
+  its icon and the hotkey's cycle position stay in step with the machine.
 
 ### Configuration
 
@@ -83,10 +85,15 @@ straight from the tray menu. **Restart the app after editing it.**
 | ------- | ------------------------------------------------------------------------------------ | ------------------ |
 | `cycle` | Modifiers (`Ctrl`, `Alt`, `Shift`, `Win`) plus a key (`A-Z`, `0-9`, `F1-F24`), or `none` | `Ctrl+Alt+Shift+P` |
 
-At least one modifier is required - a bare key would swallow normal typing
-system-wide. If the combination is already taken by another application, or the
-value cannot be read, the tray says so with a balloon on startup and falls back
-to the default.
+A hotkey is system-wide, so the value is checked before it is registered: a
+letter or a digit needs **two** modifiers (`Ctrl+C` would take copy away from
+every application), a function key needs one, and `F12` is refused because
+Windows reserves it for the debugger. Windows also reserves most `Win`
+combinations for itself and may refuse them.
+
+If the combination is already taken by another application, or the file cannot
+be read or parsed, the tray says so with a balloon on startup and states which
+hotkey it actually registered.
 
 ## Model compatibility - please read
 

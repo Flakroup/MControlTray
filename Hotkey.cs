@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Text;
 
 namespace MControlTray;
@@ -13,14 +14,16 @@ internal readonly record struct Hotkey(uint Modifiers, uint VirtualKey)
     public const uint ModWin = 0x0008;
 
     private const uint VkF1 = 0x70;
+    private const uint VkF12 = 0x7B;
     private const int FunctionKeyCount = 24;
 
     public static Hotkey None => default;
 
     public bool IsEnabled => VirtualKey != 0;
 
-    // Accepts "Ctrl+Alt+Shift+P", "win+f12", "none". At least one modifier is
-    // required: a bare key would swallow normal typing system-wide.
+    // Accepts "Ctrl+Alt+Shift+P", "ctrl+win+f5", "none". A letter or digit needs two
+    // modifiers, so a config file cannot quietly steal Ctrl+C from the whole session;
+    // F12 is refused because Windows reserves it for the debugger.
     public static bool TryParse(string? text, out Hotkey hotkey)
     {
         hotkey = None;
@@ -57,7 +60,9 @@ internal readonly record struct Hotkey(uint Modifiers, uint VirtualKey)
                 return false;
         }
 
-        if (virtualKey == 0 || modifiers == 0)
+        if (virtualKey == 0 || modifiers == 0 || virtualKey == VkF12)
+            return false;
+        if (!IsFunctionKey(virtualKey) && CountModifiers(modifiers) < 2)
             return false;
 
         hotkey = new Hotkey(modifiers, virtualKey);
@@ -81,6 +86,12 @@ internal readonly record struct Hotkey(uint Modifiers, uint VirtualKey)
         sb.Append(KeyName(VirtualKey));
         return sb.ToString();
     }
+
+    private static bool IsFunctionKey(uint virtualKey)
+        => virtualKey >= VkF1 && virtualKey < VkF1 + FunctionKeyCount;
+
+    private static int CountModifiers(uint modifiers)
+        => System.Numerics.BitOperations.PopCount(modifiers);
 
     private static uint MatchModifier(string token)
     {
@@ -111,8 +122,8 @@ internal readonly record struct Hotkey(uint Modifiers, uint VirtualKey)
             return 0;
         }
 
-        if (token.Length is 2 or 3 && (token[0] == 'F' || token[0] == 'f')
-            && int.TryParse(token.AsSpan(1), out int number)
+        if (token.Length is 2 or 3 && (token[0] == 'F' || token[0] == 'f') && token[1] != '0'
+            && int.TryParse(token.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out int number)
             && number is >= 1 and <= FunctionKeyCount)
             return VkF1 + (uint)number - 1;
 
@@ -121,7 +132,7 @@ internal readonly record struct Hotkey(uint Modifiers, uint VirtualKey)
 
     private static string KeyName(uint virtualKey)
     {
-        if (virtualKey >= VkF1 && virtualKey < VkF1 + FunctionKeyCount)
+        if (IsFunctionKey(virtualKey))
             return "F" + (virtualKey - VkF1 + 1);
         return ((char)virtualKey).ToString();
     }

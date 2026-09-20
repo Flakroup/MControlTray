@@ -106,7 +106,20 @@ public sealed class AppConfigTests : IDisposable
         AppConfig config = AppConfig.Load(unusable);
 
         config.CycleHotkey.ShouldBe(AppConfig.DefaultCycleHotkey);
-        config.Warning.ShouldBeNull();
+        config.Warning.ShouldNotBeNull(); // the user must learn their file was ignored
+    }
+
+    [Fact]
+    public void A_later_valid_line_wins_and_the_warning_names_the_hotkey_actually_in_effect()
+    {
+        Write("cycle=Ctrl+Nope", "cycle=Ctrl+Alt+K");
+
+        AppConfig config = AppConfig.Load(_path);
+
+        config.CycleHotkey.ShouldBe(new Hotkey(Hotkey.ModControl | Hotkey.ModAlt, 'K'));
+        config.Warning.ShouldNotBeNull();
+        config.Warning.ShouldContain("Ctrl+Alt+K");
+        config.Warning.ShouldNotContain(AppConfig.DefaultCycleHotkey.Format());
     }
 
     [Fact]

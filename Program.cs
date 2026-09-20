@@ -11,6 +11,7 @@ namespace MControlTray;
 internal static unsafe class Program
 {
     private const string WindowClass = "MControlTrayWnd";
+    private const string InstanceMutexName = @"Local\MControlTray.SingleInstance";
 
     private static readonly string StatePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MControlTray", "last.txt");
@@ -20,21 +21,29 @@ internal static unsafe class Program
     private static IntPtr _iconHandle;
     private static AppConfig _config = new AppConfig();
     private static bool _hotkeyRegistered;
+    private static IntPtr _instanceMutex;
+    private static IntPtr _sharedIcon;
 
     [STAThread]
     private static int Main(string[] args)
-        => args.Length > 0 ? CommandLine.Run(args, MsiProtocol.Send) : RunTray();
+        => args.Length > 0 ? CommandLine.Run(args, ApplyHeadless) : RunTray();
+
+    // A command-line switch tells the running tray what happened, so its icon and its
+    // cycle position stay in step with the machine.
+    private static void ApplyHeadless(int index)
+    {
+        MsiProtocol.Send(index);
+        SaveLast(index);
+        IntPtr tray = FindOwnWindow();
+        if (tray != IntPtr.Zero)
+            PostMessageW(tray, WM_SCENARIO_APPLIED, (IntPtr)index, IntPtr.Zero);
+    }
 
     // ---------- tray UI (Win32) ----------
     private static int RunTray()
     {
-        // Single instance: hand the launch over to the tray that is already running.
-        IntPtr existing = FindWindowW(WindowClass, null);
-        if (existing != IntPtr.Zero)
-        {
-            PostMessageW(existing, WM_ALREADY_RUNNING, IntPtr.Zero, IntPtr.Zero);
+        if (!ClaimSingleInstance())
             return 0;
-        }
 
         IntPtr hInstance = GetModuleHandleW(null);
         fixed (char* clsName = WindowClass)
@@ -62,6 +71,56 @@ internal static unsafe class Program
         return 0;
     }
 
+    // The mutex, not the window, decides whether a tray is running: a stranger can
+    // register our window class and would otherwise keep the app from ever starting.
+    private static bool ClaimSingleInstance()
+    {
+        _instanceMutex = CreateMutexW(IntPtr.Zero, false, InstanceMutexName);
+        int error = Marshal.GetLastWin32Error();
+        bool running = _instanceMutex != IntPtr.Zero
+            ? error == ERROR_ALREADY_EXISTS
+            : error == ERROR_ACCESS_DENIED; // owned by an instance we may not open
+        if (!running)
+            return true;
+
+        IntPtr existing = FindOwnWindow();
+        if (existing != IntPtr.Zero)
+            PostMessageW(existing, WM_ALREADY_RUNNING, IntPtr.Zero, IntPtr.Zero);
+        return false;
+    }
+
+    // Only a window owned by this very executable may receive the handover.
+    private static IntPtr FindOwnWindow()
+    {
+        IntPtr hwnd = FindWindowW(WindowClass, null);
+        return hwnd != IntPtr.Zero && IsOwnProcess(hwnd) ? hwnd : IntPtr.Zero;
+    }
+
+    private static bool IsOwnProcess(IntPtr hwnd)
+    {
+        uint pid = 0;
+        GetWindowThreadProcessId(hwnd, &pid);
+        if (pid == 0)
+            return false;
+
+        IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (process == IntPtr.Zero)
+            return false;
+        try
+        {
+            char* buffer = stackalloc char[1024];
+            uint size = 1024;
+            if (QueryFullProcessImageNameW(process, 0, buffer, ref size) == 0)
+                return false;
+            return string.Equals(new string(buffer, 0, (int)size),
+                Environment.ProcessPath, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            CloseHandle(process);
+        }
+    }
+
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     private static IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
@@ -75,6 +134,14 @@ internal static unsafe class Program
             case WM_HOTKEY:
                 if ((int)wParam == HOTKEY_CYCLE)
                     CycleScenario();
+                return IntPtr.Zero;
+            case WM_SCENARIO_APPLIED:
+                Scenario? applied = Scenarios.FindByIndex((int)wParam);
+                if (applied is not null)
+                {
+                    _current = applied.Value.Index;
+                    UpdateTrayIcon(applied.Value.Icon, "MControlTray: " + applied.Value.Name);
+                }
                 return IntPtr.Zero;
             case WM_ALREADY_RUNNING:
                 ShowBalloon("MControlTray", "MControlTray już działa - ikona jest w zasobniku.", error: false);
@@ -172,6 +239,8 @@ internal static unsafe class Program
     private static void OpenConfigFile()
     {
         string path = AppConfig.DefaultPath;
+        if (!File.Exists(path))
+            AppConfig.Load(path); // the user deleted it - write the template back first
         if ((long)ShellExecuteW(_hwnd, "open", path, null, null, SW_SHOWNORMAL) <= 32)
             ShowBalloon("MControlTray - konfiguracja", "Nie udało się otworzyć pliku: " + path, error: true);
     }
@@ -206,8 +275,7 @@ internal static unsafe class Program
         nid.hIcon = newIcon;
         CopyStr(nid.szTip, 128, tip);
         Shell_NotifyIconW(NIM_MODIFY, &nid);
-        if (_iconHandle != IntPtr.Zero)
-            DestroyIcon(_iconHandle);
+        DestroyOwnedIcon(_iconHandle);
         _iconHandle = newIcon;
     }
 
@@ -215,8 +283,14 @@ internal static unsafe class Program
     {
         NOTIFYICONDATAW nid = NewNid();
         Shell_NotifyIconW(NIM_DELETE, &nid);
-        if (_iconHandle != IntPtr.Zero)
-            DestroyIcon(_iconHandle);
+        DestroyOwnedIcon(_iconHandle);
+    }
+
+    // LoadIconW hands out a SHARED icon; destroying it would break every other user of it.
+    private static void DestroyOwnedIcon(IntPtr icon)
+    {
+        if (icon != IntPtr.Zero && icon != _sharedIcon)
+            DestroyIcon(icon);
     }
 
     private static void ShowBalloon(string title, string text, bool error)
@@ -253,7 +327,8 @@ internal static unsafe class Program
         {
             // fall through to system icon
         }
-        return LoadIconW(IntPtr.Zero, (IntPtr)IDI_APPLICATION);
+        _sharedIcon = LoadIconW(IntPtr.Zero, (IntPtr)IDI_APPLICATION);
+        return _sharedIcon;
     }
 
     private static void CopyStr(char* dest, int cap, string s)
@@ -302,6 +377,11 @@ internal static unsafe class Program
     private const int WM_APP = 0x8000;
     private const int WM_TRAYICON = WM_APP + 1;
     private const int WM_ALREADY_RUNNING = WM_APP + 2;
+    private const int WM_SCENARIO_APPLIED = WM_APP + 3;
+
+    private const int ERROR_ACCESS_DENIED = 5;
+    private const int ERROR_ALREADY_EXISTS = 183;
+    private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
     private const uint NIM_ADD = 0, NIM_MODIFY = 1, NIM_DELETE = 2;
     private const uint NIF_MESSAGE = 0x01, NIF_ICON = 0x02, NIF_TIP = 0x04, NIF_INFO = 0x10;
@@ -388,6 +468,21 @@ internal static unsafe class Program
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr FindWindowW(string? className, string? windowName);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hwnd, uint* processId);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateMutexW(IntPtr attributes, bool initialOwner, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int QueryFullProcessImageNameW(IntPtr process, uint flags, char* buffer, ref uint size);
+
+    [DllImport("kernel32.dll")]
+    private static extern int CloseHandle(IntPtr handle);
 
     [DllImport("user32.dll")]
     private static extern IntPtr DefWindowProcW(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
