@@ -57,13 +57,36 @@ winget install Flakroup.MControlTray
 
 - **Tray icon** - a colored circle showing the active mode (`E` / `B` / `S`).
   Left or right click opens the menu.
-- **Command line** (great for shortcuts / hotkeys / Stream Deck):
+- **Global hotkey** - <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>
+  cycles Extreme Performance -> Balanced -> ECO/Silent -> ... It is configurable
+  (see below) and can be turned off.
+- **Single instance** - launching the app while it is already running does not
+  add a second tray icon: the running instance reports itself and the new
+  process exits with code `0`.
+- **Command line** (great for shortcuts / Stream Deck):
 
   ```
   MControlTray.exe --extreme
   MControlTray.exe --balanced
   MControlTray.exe --silent
   ```
+
+  Exit codes: `0` switched, `1` the switch failed (is the MSI service running?),
+  `2` unknown argument.
+
+### Configuration
+
+`%AppData%\MControlTray\config.ini` is created on first run and can be opened
+straight from the tray menu. **Restart the app after editing it.**
+
+| Key     | Value                                                                                | Default            |
+| ------- | ------------------------------------------------------------------------------------ | ------------------ |
+| `cycle` | Modifiers (`Ctrl`, `Alt`, `Shift`, `Win`) plus a key (`A-Z`, `0-9`, `F1-F24`), or `none` | `Ctrl+Alt+Shift+P` |
+
+At least one modifier is required - a bare key would swallow normal typing
+system-wide. If the combination is already taken by another application, or the
+value cannot be read, the tray says so with a balloon on startup and falls back
+to the default.
 
 ## Model compatibility - please read
 
@@ -110,7 +133,13 @@ above, handled by the service.
 ## Build from source
 
 ```
-dotnet publish -c Release -r win-x64
+dotnet publish MControlTray.csproj -c Release -r win-x64
+```
+
+Run the tests with:
+
+```
+dotnet test test/MControlTray.Tests/MControlTray.Tests.csproj
 ```
 
 Produces a single self-contained native `.exe` (~1-2 MB) via **NativeAOT** - no .NET
@@ -122,6 +151,7 @@ workload (NativeAOT uses the MSVC linker).
 Scope will grow into a broader MSI control tray. Planned / ideas (contributions welcome):
 
 - [x] User Scenario switching (Extreme / Balanced / ECO-Silent)
+- [x] Configurable global hotkey
 - [ ] Cooler Boost toggle
 - [ ] Custom fan curves
 - [ ] Battery charge limit

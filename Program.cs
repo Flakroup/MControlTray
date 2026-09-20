@@ -1,47 +1,16 @@
 using System;
 using System.IO;
-using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace MControlTray;
 
 // Pure Win32 system-tray app (no WinForms/WPF) so it can publish as a tiny,
-// dependency-free NativeAOT binary.
-//
-// --- MSI Center local control protocol ---
-// Reverse-engineered + verified on board 15P2 (i7-14700HX), MSI Center 2.0.70.
-// Clicking a User Scenario tile in MSI Center sends a localhost TCP message to the
-// MSI background service, which performs the real power/fan switch. We replay it.
-//   Frame = [DestID:int32 LE = 104][0x00][0x12][UTF8 JSON]
-//   JSON  = {"Index":N,"Performance":2,"Fan":0,"KB":-1,"PB":-1,"IsLoad":true}
-//   N: 1 = Extreme Performance, 2 = Balanced, 4 = ECO/Silent
+// dependency-free NativeAOT binary. The MSI protocol itself lives in MsiProtocol.
 internal static unsafe class Program
 {
-    private const int DestId = 104;
-    private const int DefaultServerPort = 32682;
-
-    private readonly struct Scenario
-    {
-        public readonly string Name;
-        public readonly int Index;
-        public readonly string Icon;
-        public Scenario(string name, int index, string icon)
-        {
-            Name = name;
-            Index = index;
-            Icon = icon;
-        }
-    }
-
-    private static readonly Scenario[] Scenarios =
-    {
-        new Scenario("Extreme Performance", 1, "e.ico"),
-        new Scenario("Balanced",            2, "b.ico"),
-        new Scenario("ECO / Silent",        4, "s.ico"),
-    };
+    private const string WindowClass = "MControlTrayWnd";
 
     private static readonly string StatePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MControlTray", "last.txt");
@@ -49,100 +18,26 @@ internal static unsafe class Program
     private static IntPtr _hwnd;
     private static int _current = -1;
     private static IntPtr _iconHandle;
+    private static AppConfig _config = new AppConfig();
+    private static bool _hotkeyRegistered;
 
     [STAThread]
     private static int Main(string[] args)
-        => args.Length > 0 ? RunHeadless(args[0]) : RunTray();
-
-    // ---------- headless (shortcuts / hotkeys) ----------
-    private static int RunHeadless(string arg)
-    {
-        int idx = MatchIndex(arg);
-        if (idx < 0)
-            return 2;
-        try
-        {
-            SendScenario(idx);
-            return 0;
-        }
-        catch
-        {
-            return 1;
-        }
-    }
-
-    private static int MatchIndex(string arg)
-    {
-        switch (arg.TrimStart('-', '/').ToLowerInvariant())
-        {
-            case "extreme":
-            case "e":
-            case "1":
-                return 1;
-            case "balanced":
-            case "b":
-            case "2":
-                return 2;
-            case "silent":
-            case "eco":
-            case "s":
-            case "4":
-                return 4;
-            default:
-                return -1;
-        }
-    }
-
-    // ---------- core: replay MSI Center's switch command ----------
-    internal static void SendScenario(int index)
-    {
-        string json = "{\"Index\":" + index + ",\"Performance\":2,\"Fan\":0,\"KB\":-1,\"PB\":-1,\"IsLoad\":true}";
-        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-        byte[] frame = new byte[4 + 2 + jsonBytes.Length];
-        BitConverter.GetBytes(DestId).CopyTo(frame, 0);
-        frame[4] = 0x00;
-        frame[5] = 0x12;
-        jsonBytes.CopyTo(frame, 6);
-
-        using TcpClient client = new TcpClient { SendTimeout = 3000, ReceiveTimeout = 3000 };
-        client.Connect("127.0.0.1", GetServerPort());
-        using NetworkStream ns = client.GetStream();
-        ns.Write(frame, 0, frame.Length);
-        ns.Flush();
-        try
-        {
-            ns.ReadByte(); // drain the service's "1" ack (best-effort)
-        }
-        catch
-        {
-            // ack is optional
-        }
-    }
-
-    private static int GetServerPort()
-    {
-        try
-        {
-            int data = 0;
-            uint cb = 4;
-            int rc = RegGetValueW(HKEY_LOCAL_MACHINE,
-                @"SOFTWARE\Wow6432Node\MSI\MSI Center\Component\SDK", "Server Port",
-                RRF_RT_REG_DWORD, out _, ref data, ref cb);
-            if (rc == 0 && data > 10240)
-                return data;
-        }
-        catch
-        {
-            // fall through
-        }
-        return DefaultServerPort;
-    }
+        => args.Length > 0 ? CommandLine.Run(args, MsiProtocol.Send) : RunTray();
 
     // ---------- tray UI (Win32) ----------
     private static int RunTray()
     {
+        // Single instance: hand the launch over to the tray that is already running.
+        IntPtr existing = FindWindowW(WindowClass, null);
+        if (existing != IntPtr.Zero)
+        {
+            PostMessageW(existing, WM_ALREADY_RUNNING, IntPtr.Zero, IntPtr.Zero);
+            return 0;
+        }
+
         IntPtr hInstance = GetModuleHandleW(null);
-        fixed (char* clsName = "MControlTrayWnd")
+        fixed (char* clsName = WindowClass)
         {
             WNDCLASSEXW wc = default;
             wc.cbSize = (uint)sizeof(WNDCLASSEXW);
@@ -154,7 +49,9 @@ internal static unsafe class Program
         }
 
         _current = LoadLast();
+        _config = AppConfig.Load(AppConfig.DefaultPath);
         AddTrayIcon();
+        RegisterCycleHotkey();
 
         MSG msg;
         while (GetMessageW(&msg, IntPtr.Zero, 0, 0) > 0)
@@ -175,7 +72,15 @@ internal static unsafe class Program
                 if (mouse is WM_LBUTTONUP or WM_RBUTTONUP or WM_CONTEXTMENU)
                     ShowMenu();
                 return IntPtr.Zero;
+            case WM_HOTKEY:
+                if ((int)wParam == HOTKEY_CYCLE)
+                    CycleScenario();
+                return IntPtr.Zero;
+            case WM_ALREADY_RUNNING:
+                ShowBalloon("MControlTray", "MControlTray już działa - ikona jest w zasobniku.", error: false);
+                return IntPtr.Zero;
             case WM_DESTROY:
+                UnregisterCycleHotkey();
                 RemoveTrayIcon();
                 PostQuitMessage(0);
                 return IntPtr.Zero;
@@ -186,13 +91,15 @@ internal static unsafe class Program
     private static void ShowMenu()
     {
         IntPtr menu = CreatePopupMenu();
-        for (int i = 0; i < Scenarios.Length; i++)
+        for (int i = 0; i < Scenarios.All.Length; i++)
         {
-            uint flags = MF_STRING | (Scenarios[i].Index == _current ? MF_CHECKED : 0u);
-            fixed (char* t = Scenarios[i].Name)
+            uint flags = MF_STRING | (Scenarios.All[i].Index == _current ? MF_CHECKED : 0u);
+            fixed (char* t = Scenarios.All[i].Name)
                 AppendMenuW(menu, flags, (UIntPtr)(uint)(CMD_BASE + i), t);
         }
         AppendMenuW(menu, MF_SEPARATOR, UIntPtr.Zero, null);
+        fixed (char* cfg = "Konfiguracja skrótu...")
+            AppendMenuW(menu, MF_STRING, (UIntPtr)CMD_CONFIG, cfg);
         fixed (char* ex = "Zakończ")
             AppendMenuW(menu, MF_STRING, (UIntPtr)CMD_EXIT, ex);
 
@@ -203,29 +110,70 @@ internal static unsafe class Program
         PostMessageW(_hwnd, WM_NULL, IntPtr.Zero, IntPtr.Zero);
         DestroyMenu(menu);
 
-        if (cmd == CMD_EXIT)
+        switch (cmd)
         {
-            DestroyWindow(_hwnd);
-            return;
+            case CMD_EXIT:
+                DestroyWindow(_hwnd);
+                return;
+            case CMD_CONFIG:
+                OpenConfigFile();
+                return;
         }
-        if (cmd >= CMD_BASE && cmd < CMD_BASE + Scenarios.Length)
-            Apply(Scenarios[(int)cmd - CMD_BASE]);
+        if (cmd >= CMD_BASE && cmd < CMD_BASE + Scenarios.All.Length)
+            Apply(Scenarios.All[(int)cmd - CMD_BASE]);
+    }
+
+    private static void CycleScenario()
+    {
+        Scenario? next = Scenarios.FindByIndex(Scenarios.NextIndex(_current));
+        if (next is not null)
+            Apply(next.Value);
     }
 
     private static void Apply(Scenario s)
     {
         try
         {
-            SendScenario(s.Index);
+            MsiProtocol.Send(s.Index);
             _current = s.Index;
             SaveLast(s.Index);
             UpdateTrayIcon(s.Icon, "MControlTray: " + s.Name);
             ShowBalloon("MControlTray", "Przełączono: " + s.Name, error: false);
         }
-        catch
+        catch (Exception)
         {
             ShowBalloon("MControlTray - błąd", "Nie udało się przełączyć. Czy działa usługa MSI Center?", error: true);
         }
+    }
+
+    // ---------- configuration ----------
+    private static void RegisterCycleHotkey()
+    {
+        if (_config.Warning is not null)
+            ShowBalloon("MControlTray - konfiguracja", _config.Warning, error: true);
+
+        Hotkey hotkey = _config.CycleHotkey;
+        if (!hotkey.IsEnabled)
+            return;
+
+        _hotkeyRegistered = RegisterHotKey(_hwnd, HOTKEY_CYCLE, hotkey.Modifiers | MOD_NOREPEAT, hotkey.VirtualKey) != 0;
+        if (!_hotkeyRegistered)
+            ShowBalloon("MControlTray - konfiguracja",
+                "Nie udało się zarejestrować skrótu " + hotkey.Format() + " - zajmuje go inna aplikacja.", error: true);
+    }
+
+    private static void UnregisterCycleHotkey()
+    {
+        if (_hotkeyRegistered)
+            UnregisterHotKey(_hwnd, HOTKEY_CYCLE);
+        _hotkeyRegistered = false;
+    }
+
+    private static void OpenConfigFile()
+    {
+        string path = AppConfig.DefaultPath;
+        if ((long)ShellExecuteW(_hwnd, "open", path, null, null, SW_SHOWNORMAL) <= 32)
+            ShowBalloon("MControlTray - konfiguracja", "Nie udało się otworzyć pliku: " + path, error: true);
     }
 
     // ---------- tray icon plumbing ----------
@@ -240,7 +188,7 @@ internal static unsafe class Program
 
     private static void AddTrayIcon()
     {
-        Scenario? active = FindByIndex(_current);
+        Scenario? active = Scenarios.FindByIndex(_current);
         _iconHandle = LoadIconResource(active?.Icon ?? "q.ico");
         NOTIFYICONDATAW nid = NewNid();
         nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
@@ -301,19 +249,11 @@ internal static unsafe class Program
                 }
             }
         }
-        catch
+        catch (Exception)
         {
             // fall through to system icon
         }
         return LoadIconW(IntPtr.Zero, (IntPtr)IDI_APPLICATION);
-    }
-
-    private static Scenario? FindByIndex(int index)
-    {
-        foreach (Scenario s in Scenarios)
-            if (s.Index == index)
-                return s;
-        return null;
     }
 
     private static void CopyStr(char* dest, int cap, string s)
@@ -332,7 +272,7 @@ internal static unsafe class Program
             if (File.Exists(StatePath) && int.TryParse(File.ReadAllText(StatePath).Trim(), out int v))
                 return v;
         }
-        catch
+        catch (Exception)
         {
             // ignore
         }
@@ -346,7 +286,7 @@ internal static unsafe class Program
             Directory.CreateDirectory(Path.GetDirectoryName(StatePath)!);
             File.WriteAllText(StatePath, index.ToString());
         }
-        catch
+        catch (Exception)
         {
             // ignore
         }
@@ -358,8 +298,10 @@ internal static unsafe class Program
     private const int WM_LBUTTONUP = 0x0202;
     private const int WM_RBUTTONUP = 0x0205;
     private const int WM_CONTEXTMENU = 0x007B;
+    private const int WM_HOTKEY = 0x0312;
     private const int WM_APP = 0x8000;
     private const int WM_TRAYICON = WM_APP + 1;
+    private const int WM_ALREADY_RUNNING = WM_APP + 2;
 
     private const uint NIM_ADD = 0, NIM_MODIFY = 1, NIM_DELETE = 2;
     private const uint NIF_MESSAGE = 0x01, NIF_ICON = 0x02, NIF_TIP = 0x04, NIF_INFO = 0x10;
@@ -368,12 +310,15 @@ internal static unsafe class Program
     private const uint MF_STRING = 0x0000, MF_CHECKED = 0x0008, MF_SEPARATOR = 0x0800;
     private const uint TPM_RIGHTBUTTON = 0x0002, TPM_NONOTIFY = 0x0080, TPM_RETURNCMD = 0x0100;
 
+    private const uint MOD_NOREPEAT = 0x4000;
+    private const int HOTKEY_CYCLE = 1;
+    private const int SW_SHOWNORMAL = 1;
+
     private const uint TRAY_ID = 1;
     private const int CMD_BASE = 100;
+    private const int CMD_CONFIG = 199;
     private const int CMD_EXIT = 200;
 
-    private static readonly IntPtr HKEY_LOCAL_MACHINE = unchecked((IntPtr)0x80000002L);
-    private const uint RRF_RT_REG_DWORD = 0x00000010;
     private const int IDI_APPLICATION = 32512;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -441,6 +386,9 @@ internal static unsafe class Program
     private static extern IntPtr CreateWindowExW(uint exStyle, char* className, char* windowName, uint style,
         int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr hInstance, IntPtr param);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindowW(string? className, string? windowName);
+
     [DllImport("user32.dll")]
     private static extern IntPtr DefWindowProcW(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
 
@@ -461,6 +409,12 @@ internal static unsafe class Program
 
     [DllImport("user32.dll")]
     private static extern int PostMessageW(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern int RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint virtualKey);
+
+    [DllImport("user32.dll")]
+    private static extern int UnregisterHotKey(IntPtr hwnd, int id);
 
     [DllImport("user32.dll")]
     private static extern IntPtr LoadIconW(IntPtr hInstance, IntPtr lpIconName);
@@ -493,7 +447,7 @@ internal static unsafe class Program
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern int Shell_NotifyIconW(uint message, NOTIFYICONDATAW* data);
 
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
-    private static extern int RegGetValueW(IntPtr hkey, string subKey, string value, uint flags,
-        out uint type, ref int data, ref uint cbData);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr ShellExecuteW(IntPtr hwnd, string? verb, string file, string? parameters,
+        string? directory, int showCmd);
 }
