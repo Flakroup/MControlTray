@@ -57,13 +57,43 @@ winget install Flakroup.MControlTray
 
 - **Tray icon** - a colored circle showing the active mode (`E` / `B` / `S`).
   Left or right click opens the menu.
-- **Command line** (great for shortcuts / hotkeys / Stream Deck):
+- **Global hotkey** - <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>
+  cycles Extreme Performance -> Balanced -> ECO/Silent -> ... It is configurable
+  (see below) and can be turned off.
+- **Single instance** - launching the app while it is already running does not
+  add a second tray icon: the running instance reports itself with a balloon and
+  the new process exits with code `0`. The guard is a per-session named mutex, so
+  an unrelated program cannot keep the tray from starting.
+- **Command line** (great for shortcuts / Stream Deck):
 
   ```
   MControlTray.exe --extreme
   MControlTray.exe --balanced
   MControlTray.exe --silent
   ```
+
+  Exit codes: `0` switched, `1` the switch failed (is the MSI service running?),
+  `2` unknown argument. A tray that is already running picks the change up, so
+  its icon and the hotkey's cycle position stay in step with the machine.
+
+### Configuration
+
+`%AppData%\MControlTray\config.ini` is created on first run and can be opened
+straight from the tray menu. **Restart the app after editing it.**
+
+| Key     | Value                                                                                | Default            |
+| ------- | ------------------------------------------------------------------------------------ | ------------------ |
+| `cycle` | Modifiers (`Ctrl`, `Alt`, `Shift`, `Win`) plus a key (`A-Z`, `0-9`, `F1-F24`), or `none` | `Ctrl+Alt+Shift+P` |
+
+A hotkey is system-wide, so the value is checked before it is registered: a
+letter or a digit needs **two** modifiers (`Ctrl+C` would take copy away from
+every application), a function key needs one, and `F12` is refused because
+Windows reserves it for the debugger. Windows also reserves most `Win`
+combinations for itself and may refuse them.
+
+If the combination is already taken by another application, or the file cannot
+be read or parsed, the tray says so with a balloon on startup and states which
+hotkey it actually registered.
 
 ## Model compatibility - please read
 
@@ -110,7 +140,13 @@ above, handled by the service.
 ## Build from source
 
 ```
-dotnet publish -c Release -r win-x64
+dotnet publish MControlTray.csproj -c Release -r win-x64
+```
+
+Run the tests with:
+
+```
+dotnet test test/MControlTray.Tests/MControlTray.Tests.csproj
 ```
 
 Produces a single self-contained native `.exe` (~1-2 MB) via **NativeAOT** - no .NET
@@ -122,6 +158,7 @@ workload (NativeAOT uses the MSVC linker).
 Scope will grow into a broader MSI control tray. Planned / ideas (contributions welcome):
 
 - [x] User Scenario switching (Extreme / Balanced / ECO-Silent)
+- [x] Configurable global hotkey
 - [ ] Cooler Boost toggle
 - [ ] Custom fan curves
 - [ ] Battery charge limit
