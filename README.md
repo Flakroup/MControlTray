@@ -44,7 +44,7 @@ command.
 winget install Flakroup.MControlTray
 ```
 
-*(pending acceptance into the winget community repository)*
+*(1.1.0 is awaiting review in the winget community repository; `winget install` already serves the previous version)*
 
 ### Manual
 
