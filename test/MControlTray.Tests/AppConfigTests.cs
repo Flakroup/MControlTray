@@ -110,6 +110,27 @@ public sealed class AppConfigTests : IDisposable
     }
 
     [Fact]
+    public void The_rejected_value_warning_is_the_english_ui_text()
+    {
+        Write("cycle=Ctrl+Nope");
+
+        AppConfig config = AppConfig.Load(_path);
+
+        config.Warning.ShouldBe("Unrecognized hotkey in config.ini: \"Ctrl+Nope\". Using "
+            + AppConfig.DefaultCycleHotkey.Format() + ".");
+    }
+
+    [Fact]
+    public void The_unreadable_file_warning_is_the_english_ui_text()
+    {
+        Write("cycle=Win+F9");
+
+        AppConfig config = AppConfig.Load(Path.Combine(_path, "config.ini"));
+
+        config.Warning.ShouldBe("Could not read config.ini. Using " + AppConfig.DefaultCycleHotkey.Format() + ".");
+    }
+
+    [Fact]
     public void A_later_valid_line_wins_and_the_warning_names_the_hotkey_actually_in_effect()
     {
         Write("cycle=Ctrl+Nope", "cycle=Ctrl+Alt+K");

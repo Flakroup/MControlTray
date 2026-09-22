@@ -144,7 +144,7 @@ internal static unsafe class Program
                 }
                 return IntPtr.Zero;
             case WM_ALREADY_RUNNING:
-                ShowBalloon("MControlTray", "MControlTray już działa - ikona jest w zasobniku.", error: false);
+                ShowBalloon("MControlTray", "MControlTray is already running - look for its icon in the tray.", error: false);
                 return IntPtr.Zero;
             case WM_DESTROY:
                 UnregisterCycleHotkey();
@@ -165,9 +165,9 @@ internal static unsafe class Program
                 AppendMenuW(menu, flags, (UIntPtr)(uint)(CMD_BASE + i), t);
         }
         AppendMenuW(menu, MF_SEPARATOR, UIntPtr.Zero, null);
-        fixed (char* cfg = "Konfiguracja skrótu...")
+        fixed (char* cfg = "Hotkey settings...")
             AppendMenuW(menu, MF_STRING, (UIntPtr)CMD_CONFIG, cfg);
-        fixed (char* ex = "Zakończ")
+        fixed (char* ex = "Exit")
             AppendMenuW(menu, MF_STRING, (UIntPtr)CMD_EXIT, ex);
 
         POINT pt;
@@ -205,11 +205,11 @@ internal static unsafe class Program
             _current = s.Index;
             SaveLast(s.Index);
             UpdateTrayIcon(s.Icon, "MControlTray: " + s.Name);
-            ShowBalloon("MControlTray", "Przełączono: " + s.Name, error: false);
+            ShowBalloon("MControlTray", "Switched to " + s.Name, error: false);
         }
         catch (Exception)
         {
-            ShowBalloon("MControlTray - błąd", "Nie udało się przełączyć. Czy działa usługa MSI Center?", error: true);
+            ShowBalloon("MControlTray - error", "Could not switch the scenario. Is the MSI Center service running?", error: true);
         }
     }
 
@@ -217,7 +217,7 @@ internal static unsafe class Program
     private static void RegisterCycleHotkey()
     {
         if (_config.Warning is not null)
-            ShowBalloon("MControlTray - konfiguracja", _config.Warning, error: true);
+            ShowBalloon("MControlTray - settings", _config.Warning, error: true);
 
         Hotkey hotkey = _config.CycleHotkey;
         if (!hotkey.IsEnabled)
@@ -225,8 +225,8 @@ internal static unsafe class Program
 
         _hotkeyRegistered = RegisterHotKey(_hwnd, HOTKEY_CYCLE, hotkey.Modifiers | MOD_NOREPEAT, hotkey.VirtualKey) != 0;
         if (!_hotkeyRegistered)
-            ShowBalloon("MControlTray - konfiguracja",
-                "Nie udało się zarejestrować skrótu " + hotkey.Format() + " - zajmuje go inna aplikacja.", error: true);
+            ShowBalloon("MControlTray - settings",
+                "Could not register the hotkey " + hotkey.Format() + " - another application already uses it.", error: true);
     }
 
     private static void UnregisterCycleHotkey()
@@ -242,7 +242,7 @@ internal static unsafe class Program
         if (!File.Exists(path))
             AppConfig.Load(path); // the user deleted it - write the template back first
         if ((long)ShellExecuteW(_hwnd, "open", path, null, null, SW_SHOWNORMAL) <= 32)
-            ShowBalloon("MControlTray - konfiguracja", "Nie udało się otworzyć pliku: " + path, error: true);
+            ShowBalloon("MControlTray - settings", "Could not open the file: " + path, error: true);
     }
 
     // ---------- tray icon plumbing ----------

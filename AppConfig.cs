@@ -50,13 +50,13 @@ internal sealed class AppConfig
         catch (Exception)
         {
             // the defaults are good enough; never block startup on the config file
-            config.Warning = "Nie udało się odczytać config.ini. Używam " + config.CycleHotkey.Format() + ".";
+            config.Warning = "Could not read config.ini. Using " + config.CycleHotkey.Format() + ".";
             return config;
         }
 
         if (rejected is not null)
-            config.Warning = "Nieczytelny skrót w config.ini: \"" + rejected
-                + "\". Używam " + config.CycleHotkey.Format() + ".";
+            config.Warning = "Unrecognized hotkey in config.ini: \"" + rejected
+                + "\". Using " + config.CycleHotkey.Format() + ".";
         return config;
     }
 
