@@ -81,8 +81,8 @@ public sealed class AppConfigTests : IDisposable
         AppConfig config = AppConfig.Load(_path);
 
         config.CycleHotkey.ShouldBe(AppConfig.DefaultCycleHotkey);
-        config.Warning.ShouldNotBeNull();
-        config.Warning.ShouldContain("Ctrl+Nope");
+        config.Warning.ShouldBe("Unrecognized hotkey in config.ini: \"Ctrl+Nope\". Using "
+            + AppConfig.DefaultCycleHotkey.Format() + ".");
     }
 
     [Fact]
@@ -106,7 +106,8 @@ public sealed class AppConfigTests : IDisposable
         AppConfig config = AppConfig.Load(unusable);
 
         config.CycleHotkey.ShouldBe(AppConfig.DefaultCycleHotkey);
-        config.Warning.ShouldNotBeNull(); // the user must learn their file was ignored
+        // the user must learn their file was ignored, and which hotkey applies instead
+        config.Warning.ShouldBe("Could not read config.ini. Using " + AppConfig.DefaultCycleHotkey.Format() + ".");
     }
 
     [Fact]
