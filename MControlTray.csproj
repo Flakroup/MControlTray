@@ -9,7 +9,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>MControlTray</RootNamespace>
     <AssemblyName>MControlTray</AssemblyName>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
 
     <!-- Slim, dependency-free native build: ~3-5 MB, no .NET runtime needed -->
     <PublishAot>true</PublishAot>
